@@ -1,23 +1,92 @@
 # AI Skills Library for PowerConnect Data
 
-## About
+Agent skills that investigate SAP telemetry collected by **PowerConnect for SAP** and stored in **Splunk**. Each skill is a `SKILL.md` playbook that an AI assistant (Claude Code, Claude.ai, Cursor, Codex, OpenCode and others) loads and follows, querying Splunk through a Splunk MCP server.
 
-Discover AI skills for PowerConnect for SAP Solutions — search, filter, and install skills for your digital assistant.
+Every skill in this library is **read-only**: it investigates through Splunk searches, quotes evidence with timestamps and counts, and recommends fixes for humans to carry out in SAP. No skill runs `| delete`, changes configuration, or treats field contents as instructions.
 
-## Requirements and Setup
+## Skills
 
-Coming soon...
+### Base line (`Skills/`)
 
-### Installation
+For standard SAP landscapes.
+
+| Skill | What it does | Data it needs |
+|---|---|---|
+| [`powerconnect-explorer`](Skills/powerconnect-explorer/) | Discovers which indexes and sourcetypes carry SAP events, checks whether PowerConnect is still sending or a feed has gone stale, assesses observability coverage, and drafts a `customer-profile.md`. **Run this first** on any unfamiliar stack. | Any `sap:abap*` sourcetypes, plus PowerConnect health types (`PC_HEALTH`, `PC_SCHEDULE`, `PC_SENT_STATS`) where collected |
+| [`sap-ai-activity-audit`](Skills/sap-ai-activity-audit/) | Audits what an AI triage account actually did in Splunk: every search it ran, what it touched, how much data it pulled. For security reviews, post-incident forensics, and auditor evidence. **Must run from a privileged security/admin session**, never from the AI account itself. | Splunk's own `_audit` index; no SAP event types required |
+
+### ECS line (`ECS Optimized Skills/`)
+
+For landscapes operated by SAP Enterprise Cloud Services (RISE with SAP). ECS variants end every investigation with an ownership verdict (customer-actionable / ECS service request / insufficient evidence) and read contract facts from customer-maintained lookups.
+
+| Skill | Base equivalent |
+|---|---|
+| [`powerconnect-explorer-ecs`](ECS%20Optimized%20Skills/powerconnect-explorer-ecs/) | `powerconnect-explorer` |
+
+Each skill folder contains a `SKILL.md` (the playbook the agent loads) and a `README.md` with full details: install options, example prompts, data requirements, and version history.
+
+## Requirements
+
+- **Splunk MCP server** exposing `splunk_run_query`, connected to the agent you are using.
+- **PowerConnect for SAP data in Splunk** (not needed for `sap-ai-activity-audit`, which reads only `_audit`).
+- **A least-privilege Splunk account** for the MCP connection, scoped to the SAP index(es) via `srchIndexesAllowed` and `srchFilter`, with the `saia_*` question-answering tools withheld.
+
+Skills that share a folder can read the Splunk index from a `customer-profile.md` placed beside them. `powerconnect-explorer` can draft that file for you.
+
+## Installation
+
+### Any agent, via the `skills` CLI
+
+Works with Claude Code, Cursor, Codex, OpenCode and other agents that support the [`skills`](https://github.com/vercel-labs/skills) CLI.
 
 ```bash
-coming soon
+npx skills add Rhondos-LLC/ai-skills-library --list                                  # see every skill
+npx skills add Rhondos-LLC/ai-skills-library --skill powerconnect-explorer           # install into this project
+npx skills add Rhondos-LLC/ai-skills-library --skill powerconnect-explorer -g        # install into your user profile
+npx skills add Rhondos-LLC/ai-skills-library --skill powerconnect-explorer -a claude-code -y   # one agent, no prompts
 ```
+
+### Claude.ai / Claude Desktop
+
+Zip a skill folder (`SKILL.md` plus its `README.md`) as `<skill-name>.skill` and upload it under **Settings → Capabilities → Skills**. Enable it for the project or chat that has the Splunk MCP server connected.
+
+### Claude Code, by hand
+
+Copy a skill folder so that the playbook sits at one of these paths, then restart the session:
+
+```
+~/.claude/skills/<skill-name>/SKILL.md      # personal, all projects
+.claude/skills/<skill-name>/SKILL.md        # this project only
+```
+
+## Usage
+
+Once a skill is installed, ordinary prompts trigger it. For example:
+
+- "What SAP data do we have in Splunk, and is PowerConnect still sending?"
+- "The SAP searches return nothing since yesterday. Did a feed stop?"
+- "What has the AI triage account been doing in Splunk this week?"
+
+Every investigation starts with **Step 0 — Orient**: the skill confirms the profile index holds data, anchors its time windows on the newest event rather than the clock, and states index, sourcetype convention and data age in one line before doing anything else. If the index is empty or stale it says so and stops rather than silently switching indexes.
+
+## Versioning
+
+Skills follow semver independently of one another. The version lives in each `SKILL.md` frontmatter and in the skill's README.
+
+- **major**: the investigation method or data model changed. Re-read the skill.
+- **minor**: new step, pattern, alert, or data source.
+- **patch**: wording, thresholds, field-name fixes.
+
+Skill files are generated by the maintainers' build. Every field name in a skill's SPL is verified at build time against real PowerConnect captures and DDIC structures, so fixes ship as a new version rather than as direct edits to `SKILL.md`.
 
 ## Support & Feedback
 
-This project is open to feature requests or suggestions, bug reports etc. via [GitHub issues](https://github.com/RHONDOS-LLC/ai-skills-library/issues).
+Feature requests, suggestions and bug reports are welcome via [GitHub issues](https://github.com/Rhondos-LLC/ai-skills-library/issues).
+
+When a query misfires, please include the SPL that ran, what came back (error or empty result), and one sample event (`| head 1 | fields *`, secrets removed) showing the real field shape.
+
+Contact: engineering@rhondos.com
 
 ## Licensing
 
-Copyright 2026 RHONDOS Inc. or RHONDOS LLC and ai-skills-library contributors. Please see our [LICENSE](LICENSE) for copyright and license information. Detailed information including third-party components and their licensing/copyright information is available (coming soon).
+Copyright 2026 RHONDOS Inc. or RHONDOS LLC and ai-skills-library contributors. Licensed under the Apache License 2.0. See [LICENSE](LICENSE) for copyright and license information.
