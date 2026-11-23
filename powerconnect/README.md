@@ -8,6 +8,43 @@ It replaces "install one skill per use case" with "install one skill". The
 assistant loads a short router ([SKILL.md](SKILL.md)), picks a backend
 adapter, then reads only the playbook the question needs.
 
+## How it works
+
+The assistant never loads the whole bundle. It reads in this order and
+stops as soon as it has what the question needs:
+
+1. **Trigger.** The `description` in [SKILL.md](SKILL.md) is what the
+   assistant matches a user's question against. Any PowerConnect or
+   SAP-telemetry question loads the router.
+2. **Backend.** The router looks at the tools available and reads one
+   adapter from `backends/`: Splunk, Dynatrace, or the generic one that
+   discovers the field mapping on any other platform.
+3. **Profile or setup.** It looks for `customer-profile.md` (beside
+   `SKILL.md`, then in the project, then in the conversation). If there is
+   none and the question needs live data, [playbooks/setup.md](playbooks/setup.md)
+   offers a short guided setup: it detects platform, scope, systems and
+   PowerConnect version, asks the rest as multiple-choice questions, and
+   writes the profile. The user can skip it.
+4. **Orient.** One cheap query confirms the scope holds SAP data and finds
+   the newest event, so every time window is anchored on the data.
+5. **Route.** The routing table maps the question to one playbook, which
+   the assistant reads in full. On ECS / RISE landscapes it also reads the
+   overlay.
+6. **Investigate.** The playbook names the event types, the fields and the
+   query for each step in SPL and DQL. The first query against any event
+   type is a one-record sample to confirm field names.
+7. **Answer.** Findings carry event type, window, counts and identifiers,
+   and end with what a human should do and where.
+
+Shared knowledge lives outside the playbooks so it is written once:
+[reference/data-model.md](reference/data-model.md) (logical field names,
+record shapes, time handling) and the adapters (query idioms, cost and
+tool rules). Playbooks write field names in UPPERCASE and the adapter
+translates.
+
+Everything is read-only. The guardrails in `SKILL.md` apply to every
+playbook.
+
 ## What is inside
 
 ```
@@ -19,6 +56,7 @@ powerconnect/
     dynatrace.md                  Dynatrace MCP (execute-dql, DQL)
     other.md                      any other query tool: discover, map, record
   playbooks/                      one file per topic (see routing table)
+    _template.md                  starting point for a new playbook
   reference/
     data-model.md                 backend-neutral data model
     event-types.md                catalog of extractors and event types
@@ -95,9 +133,76 @@ must not be installed into the account it audits.
 - **Cost:** the explorer, feed-health and extractor-config playbooks contain
   24-hour queries meant for scheduled alerts or deliberate assessments; on
   a busy Dynatrace tenant these scan tens of gigabytes.
+- **Guided setup** has not been exercised end to end in a live session;
+  how its questions appear (popup or chat menu) depends on the assistant.
 - **Routing** has not been evaluated. Before release, run a set of example
   prompts per playbook and check the router reaches the right file.
 - The ECS overlay's verdict definitions need a domain review.
+
+## Adding a playbook
+
+A playbook is one Markdown file plus one row in the routing table. Nothing
+else needs to change for the assistant to start using it.
+
+1. **Check it is not covered.** Read the routing table in `SKILL.md` and
+   search `reference/event-types.md` for the event types you have in mind.
+   If a playbook already owns them, extend that one instead.
+2. **Copy the template.** `playbooks/_template.md` →
+   `playbooks/<kebab-case-topic>.md`. Keep its sections and their order;
+   aim for 80–170 lines.
+3. **Ground it.** Read the documentation page of every event type you
+   cover (slugs are in `reference/docs-index.md`) and the related KB
+   articles. Then sample one real record per event type and subtype on a
+   live backend.
+4. **Fill the field table honestly.** Mark each field `sample (<backend>)`
+   if you saw it in a record, `docs` if it comes from a documentation page
+   or a shipped alert matcher, or `SAP` if it is a standard SAP field you
+   expect but did not see. Never write real values (SIDs, hosts, user
+   names, document numbers) into a playbook; use placeholders.
+5. **Write the steps.** Each step is an intent sentence, then an SPL block
+   and a DQL block. Follow the record shape (latest per entity for
+   snapshots and streams; distinct run ids for header + detail), filter on
+   event type and one SID first, use the time placeholders, and convert
+   strings before comparing numbers. Lead the file with the one insight
+   that prevents the most common wrong conclusion.
+6. **Run every query** against a real system before you submit it, on a
+   one-hour window. A query that parses is not proof: an unknown field
+   returns nulls, so check that the result columns are populated.
+7. **Route it.** Add one row to the routing table in `SKILL.md`, phrased
+   in the words a user would use. Add a "Not for" link from the
+   neighbouring playbooks so the boundaries stay clear, and add the name
+   to the Playbooks table above. Touch the `description` in the
+   frontmatter only if the new topic's trigger words are missing; it must
+   stay under 1,024 characters.
+8. **Check and version.** Run the consistency check and bump
+   `metadata.version` in `SKILL.md` (minor for a new playbook, patch for
+   fixes):
+
+```bash
+python3 tools/check_powerconnect_bundle.py
+```
+
+   It verifies that every routed file exists, links resolve, cited
+   documentation slugs exist, the description fits, and the queries follow
+   the conventions learned from live validation.
+9. **Open a pull request** that says which backend and which kind of
+   system the queries were run on, and which fields remain unconfirmed.
+
+### Adding a backend adapter
+
+To support another platform natively, add `backends/<platform>.md` with
+the same sections as the Splunk and Dynatrace adapters (where the data is,
+the logical-field mapping, Step 0, query idioms, tool hygiene), add a row
+to the backend table in `SKILL.md`, and add that platform's query block to
+playbooks as you validate them. Until a playbook has a block for the new
+platform, the assistant translates from the idioms in the adapter.
+
+### Changing shared rules
+
+Edit `reference/data-model.md` or the adapter, not individual playbooks,
+when something applies everywhere (a field that behaves differently, a
+cost rule, a new record shape). Playbooks should link to shared rules
+rather than repeat them.
 
 ## Maintaining the references
 
