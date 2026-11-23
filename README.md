@@ -6,6 +6,10 @@ Every skill in this library is **read-only**: it investigates through Splunk sea
 
 ## Skills
 
+### Bundle (`powerconnect/`) — draft
+
+One installable skill that routes any PowerConnect question to the right playbook and works on Splunk, Dynatrace or any other platform reachable through a query tool. It bundles 30 playbooks, including a guided first-use setup, plus an ECS overlay (coverage, feed health, basis operations, interfaces, security, change tracking, cloud, business data, alert and dashboard help), including a documentation Q&A playbook that answers from docs.rhondos.com. See [`powerconnect/README.md`](powerconnect/README.md) for contents, requirements and what "draft" means. Install either the bundle or the standalone skills below, not both.
+
 ### Base line (`Skills/`)
 
 For standard SAP landscapes.
