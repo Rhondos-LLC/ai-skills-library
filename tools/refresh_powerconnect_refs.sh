@@ -13,4 +13,5 @@ for slug in summary-of-extractors-and-event_type-s list-of-event-types \
     "https://docs.rhondos.com/powerconnect-for-sap-solutions/$slug.md"
 done
 python3 -I tools/build_powerconnect_refs.py "$WORK/docs" powerconnect/reference
+python3 -I tools/build_powerconnect_manifest.py
 echo "References rebuilt from $WORK"

@@ -77,6 +77,32 @@ for path in sorted(glob.glob(os.path.join(ROOT, "playbooks", "*.md"))):
     if lines > 270:
         warnings.append(f"{path}: {lines} lines; consider splitting")
 
+# 7. The published manifest matches the files, and the fetch script is pinned
+#    to the release branch with the same checksum function.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import build_powerconnect_manifest as manifest_builder  # noqa: E402
+
+try:
+    have_manifest = read(os.path.join(ROOT, "manifest.json"))
+except OSError:
+    have_manifest = None
+if have_manifest != manifest_builder.build_manifest(ROOT):
+    errors.append("manifest.json is missing or stale; run python3 tools/build_powerconnect_manifest.py")
+fetch_py = read(os.path.join(ROOT, "scripts", "fetch.py"))
+pinned = re.search(r'^RELEASE_URL = "([^"]+)"$', fetch_py, re.M)
+if not pinned or not pinned.group(1).startswith("https://") \
+        or not pinned.group(1).endswith("/ai-skills-library/release/powerconnect/"):
+    errors.append("scripts/fetch.py: RELEASE_URL must point at the release branch over https")
+def digest_src(text):
+    return re.search(r"def digest\(data\):.*?return [^\n]+", text, re.S)
+
+
+builder_digest = digest_src(read(os.path.join("tools", "build_powerconnect_manifest.py")))
+fetch_digest = digest_src(fetch_py)
+if not builder_digest or not fetch_digest or \
+        builder_digest.group(0).splitlines()[-1] != fetch_digest.group(0).splitlines()[-1]:
+    errors.append("digest() differs between scripts/fetch.py and the manifest builder")
+
 for w in warnings:
     print("warning:", w)
 for e in errors:

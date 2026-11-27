@@ -1,6 +1,6 @@
 # powerconnect — one skill for all PowerConnect data
 
-**Status: draft (0.1.0).** A single installable skill that routes any
+**Status: draft (0.2.0).** A single installable skill that routes any
 question about SAP telemetry collected by PowerConnect for SAP to the right
 playbook, on whichever platform holds the data.
 
@@ -16,24 +16,29 @@ stops as soon as it has what the question needs:
 1. **Trigger.** The `description` in [SKILL.md](SKILL.md) is what the
    assistant matches a user's question against. Any PowerConnect or
    SAP-telemetry question loads the router.
-2. **Backend.** The router looks at the tools available and reads one
+2. **Update check.** The router runs `scripts/fetch.py --check`, which
+   compares the installed copy with the release published in this
+   repository. If the published one is newer, the assistant reads every
+   file through the script for the rest of the conversation (see
+   [Live updates](#live-updates)).
+3. **Backend.** The router looks at the tools available and reads one
    adapter from `backends/`: Splunk, Dynatrace, or the generic one that
    discovers the field mapping on any other platform.
-3. **Profile or setup.** It looks for `customer-profile.md` (beside
+4. **Profile or setup.** It looks for `customer-profile.md` (beside
    `SKILL.md`, then in the project, then in the conversation). If there is
    none and the question needs live data, [playbooks/setup.md](playbooks/setup.md)
    offers a short guided setup: it detects platform, scope, systems and
    PowerConnect version, asks the rest as multiple-choice questions, and
    writes the profile. The user can skip it.
-4. **Orient.** One cheap query confirms the scope holds SAP data and finds
+5. **Orient.** One cheap query confirms the scope holds SAP data and finds
    the newest event, so every time window is anchored on the data.
-5. **Route.** The routing table maps the question to one playbook, which
+6. **Route.** The routing table maps the question to one playbook, which
    the assistant reads in full. On ECS / RISE landscapes it also reads the
    overlay.
-6. **Investigate.** The playbook names the event types, the fields and the
+7. **Investigate.** The playbook names the event types, the fields and the
    query for each step in SPL and DQL. The first query against any event
    type is a one-record sample to confirm field names.
-7. **Answer.** Findings carry event type, window, counts and identifiers,
+8. **Answer.** Findings carry event type, window, counts and identifiers,
    and end with what a human should do and where.
 
 Shared knowledge lives outside the playbooks so it is written once:
@@ -50,7 +55,10 @@ playbook.
 ```
 powerconnect/
   SKILL.md                        router: shared rules + routing table
+  manifest.json                   version + checksum per file (generated)
   customer-profile.template.md    filled in by the guided setup on first use
+  scripts/
+    fetch.py                      serves the newest published copy of a file
   backends/
     splunk.md                     Splunk MCP (splunk_run_query, SPL)
     dynatrace.md                  Dynatrace MCP (execute-dql, DQL)
@@ -92,6 +100,9 @@ one it can still point to the right pages from the bundled index.
 - A least-privilege, read-only account for that tool, scoped to the SAP
   data.
 - For `docs-qa`: the ability to fetch `https://docs.rhondos.com`.
+- For live updates (optional): `python3` and HTTPS access to
+  `raw.githubusercontent.com`. Without them the skill uses its bundled
+  files.
 
 ## Install
 
@@ -106,6 +117,67 @@ Capabilities → Skills.
 
 Do not install this bundle alongside the standalone `powerconnect-explorer`
 skills; both would trigger on the same questions.
+
+## Live updates
+
+The installed skill can pick up new and corrected playbooks without a
+reinstall. Once per conversation the router runs
+[scripts/fetch.py](scripts/fetch.py) `--check`, which does one HTTP GET
+for `manifest.json` on the `release` branch of this repository:
+
+```
+https://raw.githubusercontent.com/Rhondos-LLC/ai-skills-library/release/powerconnect/manifest.json
+```
+
+- **Published version newer than installed:** it downloads every file
+  whose checksum differs, rejects any download that does not match the
+  manifest, and caches them in `~/.cache/powerconnect-skill/`. The
+  assistant then reads every file through the script, so one conversation
+  never mixes two versions. If the router itself changed, the script
+  prints the new one and the assistant follows it.
+- **Same or older version, no network, or any error:** the assistant reads
+  the bundled files as usual. A failed check never blocks an answer.
+
+A file read re-checks after six hours; `--check` always checks. GitHub
+caches raw files for up to five minutes, so a check right after a release
+can see the old version, or a mismatch that falls back to the installed
+copy until the cache expires.
+
+| Where the skill runs | Live updates |
+|---|---|
+| Claude Code | Yes. Allow `Bash(python3 <skill folder>/scripts/fetch.py:*)` to skip the permission prompt. |
+| Claude.ai, Claude desktop | Only if the organisation's code-execution network settings allow `raw.githubusercontent.com`. |
+| Claude API (skills in the code-execution container) | No network: bundled files only. |
+
+What it cannot change: the `description` in the frontmatter (it decides
+when the skill triggers and is read only at install time) and
+`scripts/fetch.py` itself (the script serves Markdown only, never code).
+Changes to either need a reinstall.
+
+**Publishing a release.** `main` is where work lands; `release` is what
+every installed copy reads, so only promote what has been validated:
+
+1. Merge to `main` with `metadata.version` bumped and the manifest
+   rebuilt (`python3 tools/build_powerconnect_manifest.py`; the
+   consistency check fails if it is stale). An installed copy only
+   switches when the published version is higher than its own.
+2. Fast-forward the release branch:
+
+   ```bash
+   git push origin main:release
+   ```
+
+3. To withdraw a bad release, revert on `main`, bump the version again and
+   promote. Lowering the version on `release` instead would leave copies
+   that already moved on with the bad files until their next reinstall.
+
+Protect the `release` branch: anyone who can push to it changes what
+every installed assistant does.
+
+**Testing a release before promoting it.** Point one session at another
+copy with `POWERCONNECT_BUNDLE_URL` (https, or http on localhost), or
+turn the network off with `POWERCONNECT_OFFLINE=1`. These are for
+maintainers; the skill tells the assistant never to set them.
 
 ## Not included on purpose
 
@@ -174,19 +246,26 @@ else needs to change for the assistant to start using it.
    to the Playbooks table above. Touch the `description` in the
    frontmatter only if the new topic's trigger words are missing; it must
    stay under 1,024 characters.
-8. **Check and version.** Run the consistency check and bump
-   `metadata.version` in `SKILL.md` (minor for a new playbook, patch for
-   fixes):
+8. **Check and version.** Bump `metadata.version` in `SKILL.md` (minor
+   for a new playbook, patch for fixes), rebuild the manifest and run the
+   consistency check:
+
+```bash
+python3 tools/build_powerconnect_manifest.py
+```
 
 ```bash
 python3 tools/check_powerconnect_bundle.py
 ```
 
    It verifies that every routed file exists, links resolve, cited
-   documentation slugs exist, the description fits, and the queries follow
-   the conventions learned from live validation.
+   documentation slugs exist, the description fits, the manifest is
+   current, and the queries follow the conventions learned from live
+   validation.
 9. **Open a pull request** that says which backend and which kind of
    system the queries were run on, and which fields remain unconfirmed.
+   Installed copies get it only once it is promoted to `release` (see
+   [Live updates](#live-updates)).
 
 ### Adding a backend adapter
 
@@ -214,4 +293,5 @@ tools/refresh_powerconnect_refs.sh
 ```
 
 Re-run it after a documentation release so the catalogs and the docs index
-do not go stale.
+do not go stale. It also rebuilds `manifest.json`; bump the version before
+you promote the result.
